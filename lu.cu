@@ -1,7 +1,7 @@
 #include <iostream>
-#include <fstream>
 #include <pthread.h>
 #include <stdexcept>
+#include <cmath>
 #include "pthread_barrier_osx.h"
 #ifdef __CUDACC__
 #define CUDA_CALLABLE __host__ __device__
@@ -10,6 +10,9 @@
 #define CUDA_CALLABLE
 #define BARRIER() pthread_barrier_wait(&barrier)
 #endif 
+#ifdef GRAPHITE
+#include "carbon_user.h"
+#endif
 using namespace std;
 int N,P,B,NB;
 class Block{
@@ -201,14 +204,13 @@ void cuda_download(Matrix*lm, Matrix*rm){
 #endif
 int main(int argc, char**argv)
 {
-	if(argc<=4){
+	if(argc<=3){
 		usage(argv[0]);
 		return -1;
 	}
 	N=atoi(argv[1]);
 	P=atoi(argv[2]);
 	B=atoi(argv[3]);
-	ifstream fin(argv[4]);
 	if(N==0||P==0||B==0){
 		usage(argv[0]);
 		return -1;
@@ -223,9 +225,14 @@ int main(int argc, char**argv)
 			A->getBlock(i,j).p=new float[B*B];
 		}
 	}
+	srand48(1);
+#define MAXRAND 32768.0
 	for(i=0;i<N;++i){
 		for(j=0;j<N;++j){
-			fin>>A->at(i,j);
+			A->at(i,j)=((double)lrand48())/MAXRAND;
+			if(i==j){
+				A->at(i,j)*=10;
+			}
 		}
 	}
 #ifdef __CUDACC__
@@ -243,6 +250,9 @@ int main(int argc, char**argv)
 	delete[]A->p;
 	cuda_download(A,d_A);
 #else
+#ifdef GRAPHITE
+	CarbonEnableModels();
+#endif
 	pthread_barrier_init(&barrier,NULL,P);
 	int*thread_args=new int[P];
 	pthread_t*thread_handle=new pthread_t[P];
@@ -258,6 +268,9 @@ int main(int argc, char**argv)
 	delete[]thread_args;
 	delete[]thread_handle;
 	pthread_barrier_destroy(&barrier);
+#ifdef GRAPHITE
+	CarbonDisableModels();
+#endif
 #endif
 	A->print();
 
