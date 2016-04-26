@@ -2,10 +2,14 @@
 #include <stdexcept>
 #include <cmath>
 #include <cstdlib>
-#ifdef __APPLE__
-#include "pthread_barrier_osx.h"
+
+//Fix some platforms missing barrier implementation
+#if defined(__APPLE__) || defined(__CYGWIN32__) || defined(__CYGWIN64__)
+#include "pthread_barrier.h"
 #endif
-#ifdef __CUDACC__
+
+//define BARRIER() and CUDA_CALLABLE differently
+#ifdef __CUDACC__ 
 #define CUDA_CALLABLE __host__ __device__
 #define BARRIER() __syncthreads()
 #else
@@ -13,13 +17,17 @@
 #include <pthread.h>
 #define BARRIER() pthread_barrier_wait(&barrier)
 #endif 
+
 #ifdef GRAPHITE
 #include "carbon_user.h"
 #endif
+
+//Fix VC missing rand48 functions
 #if defined(_MSC_VER)
 #define lrand48() rand()
 #define srand48(x) srand(x)
 #endif  
+
 using namespace std;
 int N,P,B,NB;
 class Block{
@@ -165,13 +173,14 @@ void* thread_main(void*p)
 		}
 		BARRIER();
 	}
-#ifdef __CUDACC__
-#else
+#ifndef __CUDACC__
 	return NULL;
 #endif
 }
+
 #ifdef __CUDACC__
-void cuda_upload(Matrix*rm, Matrix*lm){
+void cuda_upload(Matrix*rm, Matrix*lm)
+{
 	Block*blocks=new Block[NB*NB];
 	for(int i=0;i<NB;++i){
 		for(int j=0;j<NB;++j){
@@ -193,7 +202,8 @@ void cuda_upload(Matrix*rm, Matrix*lm){
 	delete m;
 	delete[]blocks;
 }
-void cuda_download(Matrix*lm, Matrix*rm){
+void cuda_download(Matrix*lm, Matrix*rm)
+{
 	cudaMemcpy(lm, rm, sizeof(Matrix), cudaMemcpyDeviceToHost);
 	
 	Block*blocks=new Block[NB*NB];
@@ -211,6 +221,7 @@ void cuda_download(Matrix*lm, Matrix*rm){
 	}
 }
 #endif
+
 int main(int argc, char**argv)
 {
 	if(argc<=3){
@@ -244,7 +255,9 @@ int main(int argc, char**argv)
 			}
 		}
 	}
+
 #ifdef __CUDACC__
+	//CUDA code begins
 	Matrix*d_A;
 	cudaMalloc((void **)&d_A, sizeof(Matrix));
 	cuda_upload(d_A,A);
@@ -258,7 +271,9 @@ int main(int argc, char**argv)
 	}
 	delete[]A->p;
 	cuda_download(A,d_A);
+	//CUDA code ends
 #else
+	//pthread code begins
 #ifdef GRAPHITE
 	CarbonEnableModels();
 #endif
@@ -280,9 +295,10 @@ int main(int argc, char**argv)
 #ifdef GRAPHITE
 	CarbonDisableModels();
 #endif
+	//pthread code ends
 #endif
 #ifndef GRAPHITE
-//	A->print();
+	A->print();
 #endif
 
 	for(i=0;i<NB;++i){
