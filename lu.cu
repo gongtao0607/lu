@@ -275,7 +275,9 @@ int main(int argc, char**argv)
 	CarbonDisableModels();
 #endif
 #endif
+#ifndef GRAPHITE
 	A->print();
+#endif
 
 	for(i=0;i<NB;++i){
 		for(j=0;j<NB;++j){
