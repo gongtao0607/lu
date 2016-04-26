@@ -2,7 +2,9 @@
 #include <pthread.h>
 #include <stdexcept>
 #include <cmath>
+#ifdef __APPLE__
 #include "pthread_barrier_osx.h"
+#endif
 #ifdef __CUDACC__
 #define CUDA_CALLABLE __host__ __device__
 #define BARRIER() __syncthreads()
