@@ -1,5 +1,5 @@
 LDLIBS += -lpthread
-CPPFLAGS += -g
+#CPPFLAGS += -g
 all:lucpu lucuda
 lucpu:lu.cu
 	cp lu.cu lucpu.cpp

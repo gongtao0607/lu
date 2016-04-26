@@ -1,5 +1,4 @@
 #include <iostream>
-#include <pthread.h>
 #include <stdexcept>
 #include <cmath>
 #include <cstdlib>
@@ -11,11 +10,16 @@
 #define BARRIER() __syncthreads()
 #else
 #define CUDA_CALLABLE
+#include <pthread.h>
 #define BARRIER() pthread_barrier_wait(&barrier)
 #endif 
 #ifdef GRAPHITE
 #include "carbon_user.h"
 #endif
+#if defined(_MSC_VER)
+#define lrand48() rand()
+#define srand48(x) srand(x)
+#endif  
 using namespace std;
 int N,P,B,NB;
 class Block{
@@ -50,7 +54,9 @@ public:
 		}
 	}
 }*A;
+#ifndef __CUDACC__
 pthread_barrier_t barrier;
+#endif
 void usage(char*n){
 	cout<<"Usage: ./"<<n<<" N P B matrix_file\n\tN:NxN matrix\n\tP:P threads\n\tB:BxB block"<<endl;
 }
@@ -276,7 +282,7 @@ int main(int argc, char**argv)
 #endif
 #endif
 #ifndef GRAPHITE
-	A->print();
+//	A->print();
 #endif
 
 	for(i=0;i<NB;++i){
