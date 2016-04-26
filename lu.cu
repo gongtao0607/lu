@@ -2,6 +2,7 @@
 #include <pthread.h>
 #include <stdexcept>
 #include <cmath>
+#include <cstdlib>
 #ifdef __APPLE__
 #include "pthread_barrier_osx.h"
 #endif
