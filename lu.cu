@@ -2,6 +2,8 @@
 #include <stdexcept>
 #include <cmath>
 #include <cstdlib>
+#include <sys/timeb.h>
+#define diffftime(a,b) ((a.time-b.time)+(a.millitm-b.millitm)/1000.0)
 
 //Fix some platforms missing barrier implementation
 #if defined(__APPLE__) || defined(__CYGWIN32__) || defined(__CYGWIN64__)
@@ -26,10 +28,11 @@
 #if defined(_MSC_VER)
 #define lrand48() rand()
 #define srand48(x) srand(x)
-#endif  
+#endif 
 
 using namespace std;
 int N,P,B,NB;
+struct timeb main_t1, main_t2, threads_t1, threads_t2;
 class Block{
 public:
 	float*p;
@@ -182,17 +185,32 @@ void* thread_main(void*p)
 void cuda_upload(Matrix*rm, Matrix*lm)
 {
 	Block*blocks=new Block[NB*NB];
+#ifdef CONTIGUOUS
 	for(int i=0;i<NB;++i){
 		for(int j=0;j<NB;++j){
 			float*p;
-			cudaMalloc((void **)&p, sizeof(float)*B*B);
+			if(cudaMalloc((void **)&p, sizeof(float)*B*B)!=cudaSuccess)
+				throw runtime_error("cudaMalloc");
 			blocks[i*NB+j].b=B;
 			blocks[i*NB+j].p=p;
 			cudaMemcpy(p, lm->getBlock(i,j).p, sizeof(float)*B*B, cudaMemcpyHostToDevice);
 		}
 	}
+#else
+	float*p;
+	if(cudaMalloc((void **)&p, sizeof(float)*B*B*NB*NB)!=cudaSuccess)
+		throw runtime_error("cudaMalloc");
+	cudaMemcpy(p, lm->getBlock(0,0).p, sizeof(float)*B*B*NB*NB, cudaMemcpyHostToDevice);
+	for(int i=0;i<NB;++i){
+		for(int j=0;j<NB;++j){
+			blocks[i*NB+j].b=B;
+			blocks[i*NB+j].p=p+B*B*(i*NB+j);
+		}
+	}
+#endif
 	Block*d_blocks;
-	cudaMalloc((void **)&d_blocks, sizeof(Block)*NB*NB);
+	if(cudaMalloc((void **)&d_blocks, sizeof(Block)*NB*NB)!=cudaSuccess)
+		throw runtime_error("cudaMalloc");
 	cudaMemcpy(d_blocks, blocks, sizeof(Block)*NB*NB, cudaMemcpyHostToDevice);
 	
 	Matrix*m=new Matrix(N,B);
@@ -211,6 +229,7 @@ void cuda_download(Matrix*lm, Matrix*rm)
 	cudaFree(lm->p);
 	
 	lm->p=blocks;
+#ifdef CONTIGUOUS
 	for(int i=0;i<NB;++i){
 		for(int j=0;j<NB;++j){
 			float*p=new float[B*B];
@@ -219,6 +238,16 @@ void cuda_download(Matrix*lm, Matrix*rm)
 			lm->getBlock(i,j).p=p;
 		}
 	}
+#else
+	float*p=new float[B*B*NB*NB];
+	cudaMemcpy(p, lm->getBlock(0,0).p, sizeof(float)*B*B*NB*NB, cudaMemcpyDeviceToHost);
+	cudaFree(lm->getBlock(0,0).p);
+	for(int i=0;i<NB;++i){
+		for(int j=0;j<NB;++j){
+			lm->getBlock(i,j).p=p+B*B*(i*NB+j);
+		}
+	}
+#endif
 }
 #endif
 
@@ -235,16 +264,27 @@ int main(int argc, char**argv)
 		usage(argv[0]);
 		return -1;
 	}
+	ftime(&main_t1);
 	NB=N/B;
 	A=new Matrix(N,B);
 	A->p=new Block[NB*NB];
 	int i,j;
+#ifdef CONTIGUOUS
 	for(i=0;i<NB;++i){
 		for(j=0;j<NB;++j){
 			A->getBlock(i,j).b=B;
 			A->getBlock(i,j).p=new float[B*B];
 		}
 	}
+#else
+	float*p=new float[B*B*NB*NB];
+	for(i=0;i<NB;++i){
+		for(j=0;j<NB;++j){
+			A->getBlock(i,j).b=B;
+			A->getBlock(i,j).p=p+B*B*(i*NB+j);
+		}
+	}
+#endif
 	srand48(1);
 #define MAXRAND 32768.0
 	for(i=0;i<N;++i){
@@ -259,17 +299,26 @@ int main(int argc, char**argv)
 #ifdef __CUDACC__
 	//CUDA code begins
 	Matrix*d_A;
-	cudaMalloc((void **)&d_A, sizeof(Matrix));
+	if(cudaMalloc((void **)&d_A, sizeof(Matrix))!=cudaSuccess)
+		throw runtime_error("cudaMalloc");
 	cuda_upload(d_A,A);
 
+	ftime(&threads_t1);
 	thread_main<<<1,P>>>(d_A,P);
+	cudaDeviceSynchronize();
+	ftime(&threads_t2);
 
+#ifdef CONTIGUOUS
 	for(i=0;i<NB;++i){
 		for(j=0;j<NB;++j){
 			delete[] A->getBlock(i,j).p;
 		}
 	}
+#else
+	delete[] A->getBlock(0,0).p;
+#endif
 	delete[]A->p;
+
 	cuda_download(A,d_A);
 	//CUDA code ends
 #else
@@ -280,6 +329,7 @@ int main(int argc, char**argv)
 	pthread_barrier_init(&barrier,NULL,P);
 	int*thread_args=new int[P];
 	pthread_t*thread_handle=new pthread_t[P];
+	ftime(&threads_t1);
 	for(i=1;i<P;++i){
 		thread_args[i]=i;
 		pthread_create(&thread_handle[i],NULL,thread_main,&thread_args[i]);
@@ -289,6 +339,7 @@ int main(int argc, char**argv)
 	for(i=1;i<P;++i){
 		pthread_join(thread_handle[i],NULL);
 	}
+	ftime(&threads_t2);
 	delete[]thread_args;
 	delete[]thread_handle;
 	pthread_barrier_destroy(&barrier);
@@ -298,15 +349,22 @@ int main(int argc, char**argv)
 	//pthread code ends
 #endif
 #ifndef GRAPHITE
-	A->print();
+	//A->print();
 #endif
 
+#ifdef CONTIGUOUS
 	for(i=0;i<NB;++i){
 		for(j=0;j<NB;++j){
 			delete[]A->getBlock(i,j).p;
 		}
 	}
+#else
+	delete[]A->getBlock(0,0).p;
+#endif
 	delete[]A->p;
 	delete A;
+	ftime(&main_t2);
+	cout<<"Overall execution time = "<<diffftime(main_t2,main_t1)<<endl;
+	cout<<"Threads execution time = "<<diffftime(threads_t2,threads_t1)<<endl;
 	return 0;
 }
